@@ -10,3 +10,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+ttlog.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+
+[dev-dependencies]

@@ -1,3 +1,10 @@
 @kv-database
 ==============
 
+
+
+- [ ] append only log file csv type format
+- [ ] when we delete we gonna insert a tombstone
+- [ ] we should split the log file in to multiple segments
+- [ ] we should have a spawned thread that will handle the compaction
+

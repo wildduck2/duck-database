@@ -17,8 +17,11 @@ keywords = ["database", "embedded", "storage", "sql", "data"]
 categories = ["database", "development-tools", "embedded-database"]
 
 [workspace.dependencies]
-chrono = "0.4.41"
+chrono = { version = "0.4", features = ["serde"] }
 colored = "3.0.0"
 
+ttlog = "0.1.14"
 tokio = { version = "1.47.1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
