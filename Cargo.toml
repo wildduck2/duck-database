@@ -1,0 +1,24 @@
+[workspace]
+members = ["cli_interface","core_engine"
+    # Add your individual crate folder names here:
+    # "core_engine",
+    # "cli_interface",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["wildduck2 <duckui@duck.com>"]
+description = "A high-performance, embedded database management system for Rust."
+license = "MIT"
+repository = "github.com"
+keywords = ["database", "embedded", "storage", "sql", "data"]
+categories = ["database", "development-tools", "embedded-database"]
+
+[workspace.dependencies]
+chrono = "0.4.41"
+colored = "3.0.0"
+
+tokio = { version = "1.47.1", features = ["full"] }
+
