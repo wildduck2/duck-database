@@ -380,9 +380,9 @@ dependencies = [
 
 [[package]]
 name = "ttlog"
-version = "0.1.16"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f65062952096902c5ee7131101a89034564a35715a46e943aa87fc31634ff20a"
+checksum = "03bb5c9b05ad70b5a9f1f6af2ef710ad4db5399f4d5600e17f02ca5b9b6cdf71"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -401,9 +401,9 @@ dependencies = [
 
 [[package]]
 name = "ttlog-macros"
-version = "0.1.14"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2ae8ae6f71ec31d228f68022c4712bf0f3014d5d2dba21edf251e0721b1ee19"
+checksum = "97bf1cac47e2659d0b7104a572632329650972b14b32e0152a4c5a4d59d008bb"
 dependencies = [
  "proc-macro2",
  "quote",

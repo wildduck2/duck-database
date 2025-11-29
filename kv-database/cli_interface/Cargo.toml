@@ -11,7 +11,7 @@ categories.workspace = true
 
 [dependencies]
 core_engine = { path = "../core_engine" }
-ttlog = "0.1.1"
+ttlog.workspace = true
 
 [dev-dependencies]
 core_engine = { path = "../core_engine" }
