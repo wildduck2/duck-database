@@ -64,6 +64,8 @@ name = "cli_interface"
 version = "0.1.0"
 dependencies = [
  "core_engine",
+ "serde",
+ "serde_json",
  "ttlog",
 ]
 
