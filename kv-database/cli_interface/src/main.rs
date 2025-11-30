@@ -11,16 +11,7 @@ use ttlog::{
   ttlog_macros::{debug, trace},
 };
 
-// Pre-compaction steps
-// 1. Split the log file into multiple files (aka segments)
-// 2.
-
-// Compaction steps
-// 1. Read all the files
-// 2. Sort the files by timestamp
-// 3. Run compaction on each file
-// 4. Write the new file
-//
+const PERIODIC_COMPACTION_INTERVAL: u64 = 60 * 10;
 
 fn main() -> Result<(), std::io::Error> {
   if fs::exists("./tmp")? {
@@ -35,23 +26,19 @@ fn main() -> Result<(), std::io::Error> {
   let mut log_file = log_file::LogFile::new();
   log_file.create().unwrap_or(());
 
-  for i in 0..100 {
+  for i in 0..5 {
     log_file.append(&format!("123:{}", i), "{\"name\":\"wildduck\",\"age\":25}")?;
   }
   log_file.append("123:5", "{\"name\":\"wildduck\",\"age\":25}")?;
   log_file.delete("123:1")?;
-
-  // log_file.append("123", "{\"name\":\"wilddcuk\",\"age\":25}")?;
-  // log_file.read("123")?;
-  // log_file.update("123", "{\"name\":\"wildduck\",\"age\":28}")?;
-  // log_file.read("123:1")?;
-  // log_file.read("123")?;
+  log_file.update("123:5", "{\"name\":\"wildduck\",\"age\":28}")?;
+  log_file.read("123:4")?;
 
   // trace!("[LOGFILE]", file_size = log_file.get_file_size());
 
   let handle = std::thread::spawn(move || loop {
     let _ = log_file.compact();
-    std::thread::sleep(std::time::Duration::from_secs(100));
+    std::thread::sleep(std::time::Duration::from_secs(PERIODIC_COMPACTION_INTERVAL));
   });
 
   let _ = handle.join();

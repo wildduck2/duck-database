@@ -221,7 +221,6 @@ impl LogFile {
 
     loop {
       if meta_data.size() <= offset {
-        println!("Done with this file");
         break;
       }
 
@@ -296,7 +295,7 @@ impl LogFile {
     })
   }
 
-  pub fn split(&mut self) -> Result<u64, io::Error> {
+  pub fn split(&mut self) -> Result<(), io::Error> {
     let metadata = fs::metadata(&self.path)?;
 
     if metadata.size() > FILE_THRESHOLD {
@@ -309,7 +308,6 @@ impl LogFile {
       self.current_file_id += 1;
       self.create()?;
     }
-
-    Ok(0)
+    Ok(())
   }
 }
