@@ -1,11 +1,11 @@
 use std::{
   collections::HashMap,
-  fs::{self, metadata, File, OpenOptions},
-  io::{self, Read, Seek, Write},
+  fs::{self, File, OpenOptions},
+  io::{self, Write},
   os::unix::fs::{FileExt, MetadataExt},
 };
 
-use chrono::{offset, Utc};
+use chrono::Utc;
 use serde;
 use ttlog::ttlog_macros::{error, info, trace};
 
@@ -24,7 +24,6 @@ struct MetaIndex {
 struct Index {
   file_id: u64,
   offset: u64,
-  total_size: u64,
 }
 
 #[derive(Debug)]
@@ -81,7 +80,6 @@ impl LogFile {
     let index_value = Index {
       offset: self.byte_offset,
       file_id: self.current_file_id,
-      total_size: data_size,
     };
 
     self.data_index.insert(key.to_string(), index_value);
@@ -98,7 +96,6 @@ impl LogFile {
     })?;
 
     info!("[WRITE]", index_value = value);
-
     Ok(())
   }
 
@@ -127,11 +124,9 @@ impl LogFile {
       return Err(io::Error::other("This key does not exist in the index"));
     }
 
-    let data_size = (value.len() + key.len() + 8 * 2) as u64;
     let index_value = Index {
       offset: self.byte_offset,
       file_id: self.current_file_id,
-      total_size: data_size,
     };
 
     self.data_index.insert(key.to_string(), index_value);
@@ -140,7 +135,6 @@ impl LogFile {
     let index_value = Index {
       offset: self.byte_offset,
       file_id: self.current_file_id,
-      total_size: data_size,
     };
 
     self.data_index.insert(key.to_string(), index_value);
@@ -187,16 +181,25 @@ impl LogFile {
     }
     let _ = core::mem::replace(&mut self.file_index, new_hash);
 
-    let path = format!("./tmp/log-file-{}", self.current_file_id + 1);
-    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let temp_file_path = format!(
+      "./tmp/temp-log-file-{}",
+      Utc::now().timestamp_nanos_opt().unwrap()
+    );
+    let mut temp_file = File::create(&temp_file_path)?;
 
     for (_, value) in end_file.iter() {
-      file.write_all(&value.timestamp.to_le_bytes())?;
-      file.write_all(&value.key_size.to_le_bytes())?;
-      file.write_all(&value.key_buf)?;
-      file.write_all(&value.value_size.to_le_bytes())?;
-      file.write_all(&value.value_buf)?;
+      temp_file.write_all(&value.timestamp.to_le_bytes())?;
+      temp_file.write_all(&value.key_size.to_le_bytes())?;
+      temp_file.write_all(&value.key_buf)?;
+      temp_file.write_all(&value.value_size.to_le_bytes())?;
+      temp_file.write_all(&value.value_buf)?;
     }
+
+    temp_file.flush()?;
+    let path = format!("./tmp/log-file-{}", self.current_file_id + 1);
+
+    drop(temp_file);
+    fs::rename(&temp_file_path, &path)?;
 
     for (_, path) in self.file_index.iter() {
       fs::remove_file(path)?;
@@ -206,7 +209,6 @@ impl LogFile {
     self.file_index.insert(self.current_file_id, path);
 
     info!("[COMPACT] Compaction has been completed successfully.");
-
     Ok(())
   }
 
@@ -243,8 +245,8 @@ impl LogFile {
 
     file.write_all(&meta.timestamp.to_le_bytes())?;
     file.write_all(&meta.key_size.to_le_bytes())?;
-    file.write_all(&meta.key_buf)?;
     file.write_all(&meta.value_size.to_le_bytes())?;
+    file.write_all(&meta.key_buf)?;
     file.write_all(&meta.value_buf)?;
     self.split()?;
 
@@ -273,14 +275,14 @@ impl LogFile {
     let key_size = u64::from_le_bytes(key_size_buf) as usize;
     *offset += 8;
 
-    let mut key_buf = vec![0u8; key_size];
-    file.read_exact_at(&mut key_buf, *offset)?;
-    *offset += key_size as u64;
-
     let mut value_size_buf = [0u8; 8];
     file.read_exact_at(&mut value_size_buf, *offset)?;
     let value_size = u64::from_le_bytes(value_size_buf) as usize;
     *offset += 8;
+
+    let mut key_buf = vec![0u8; key_size];
+    file.read_exact_at(&mut key_buf, *offset)?;
+    *offset += key_size as u64;
 
     let mut value_buf = vec![0u8; value_size];
     file.read_exact_at(&mut value_buf, *offset)?;
@@ -295,7 +297,7 @@ impl LogFile {
     })
   }
 
-  pub fn split(&mut self) -> Result<(), io::Error> {
+  fn split(&mut self) -> Result<(), io::Error> {
     let metadata = fs::metadata(&self.path)?;
 
     if metadata.size() > FILE_THRESHOLD {
