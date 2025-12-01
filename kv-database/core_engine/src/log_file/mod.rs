@@ -29,7 +29,7 @@ struct Index {
 #[derive(Debug)]
 pub struct LogFile {
   byte_offset: u64,
-  current_file_id: u64,
+  pub current_file_id: u64,
   path: String,
   data_index: HashMap<String, Index>,
   pub file_index: HashMap<u64, String>,
@@ -53,7 +53,9 @@ impl LogFile {
   }
 
   pub fn start(&mut self) -> Result<(), std::io::Error> {
-    let files = fs::read_dir("./tmp")?
+    fs::create_dir_all("tmp")?;
+
+    let mut files = fs::read_dir("./tmp")?
       .filter_map(|entry| entry.ok())
       .filter_map(|entry| {
         let path = entry.path();
@@ -71,22 +73,48 @@ impl LogFile {
       })
       .collect::<Vec<_>>();
 
-    for file_path in files {
-      let file = File::open(&file_path)?;
-      let metadata = fs::metadata(file_path)?;
-      let mut offset = 0;
+    files.sort_by_key(|path| {
+      path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .strip_prefix("log-file-")
+        .unwrap()
+        .parse::<u64>()
+        .unwrap()
+    });
 
+    for file_path in &files {
+      let file = File::open(file_path)?;
+      let file_id = file_path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .strip_prefix("log-file-")
+        .unwrap()
+        .parse::<u64>()
+        .unwrap();
+      let metadata = fs::metadata(file_path)?;
+
+      self
+        .file_index
+        .insert(file_id, file_path.to_str().unwrap().to_string());
+
+      let mut offset = 0;
       loop {
         if metadata.size() <= offset {
           break;
         }
 
-        let index = Index {
-          offset,
-          file_id: self.current_file_id,
-        };
+        let index = Index { offset, file_id };
 
-        let meta = self.get_index_from_file(&mut offset, &file)?;
+        let meta = match self.get_index_from_file(&mut offset, &file) {
+          Ok(meta) => meta,
+          Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+          Err(e) => return Err(e),
+        };
         let key = String::from_utf8(meta.key_buf.clone()).unwrap();
 
         if meta.value_buf.is_empty() {
@@ -97,13 +125,28 @@ impl LogFile {
         self.data_index.insert(key, index);
       }
     }
-    println!("{:#?}", self.data_index);
 
+    let id = files
+      .last()
+      .map(|path| {
+        path
+          .file_name()
+          .unwrap()
+          .to_str()
+          .unwrap()
+          .strip_prefix("log-file-")
+          .unwrap()
+          .parse::<u64>()
+          .unwrap()
+      })
+      .unwrap_or(0x1);
+    self.current_file_id = id + 1;
+
+    self.create()?;
     Ok(())
   }
 
   pub fn create(&mut self) -> Result<(), std::io::Error> {
-    fs::create_dir_all("tmp")?;
     let path = format!("./tmp/log-file-{}", self.current_file_id);
 
     OpenOptions::new().create(true).append(true).open(&path)?;
@@ -120,7 +163,7 @@ impl LogFile {
     Ok(())
   }
 
-  pub fn append(&mut self, key: &str, value: &'static str) -> Result<(), io::Error> {
+  pub fn append(&mut self, key: &str, value: &str) -> Result<(), io::Error> {
     if key.is_empty() {
       error!("The index length should be at least 1 character");
       return Err(io::Error::other(""));
@@ -145,7 +188,7 @@ impl LogFile {
       value_buf: value.as_bytes().to_vec(),
     })?;
 
-    info!("[WRITE]", index_value = value);
+    info!("[WRITE]", index_value = value.to_string());
     Ok(())
   }
 
@@ -159,9 +202,9 @@ impl LogFile {
     // let timestamp = Utc.timestamp_opt(index.timestamp, 0);
     // let timestamp = timestamp.unwrap().to_string();
     // let index_key_value = String::from_utf8(index.key_buf).unwrap().to_string();
-    let index_value_value = String::from_utf8(index.value_buf).unwrap().to_string();
-    info!("[READ]", value = index_value_value);
-    Ok(index_value_value)
+    let value = String::from_utf8(index.value_buf).unwrap().to_string();
+    info!("[READ]", key = id.to_string(), value = value);
+    Ok(value)
   }
 
   pub fn update(&mut self, key: &str, value: &'static str) -> Result<(), io::Error> {
@@ -179,13 +222,7 @@ impl LogFile {
       file_id: self.current_file_id,
     };
 
-    self.data_index.insert(key.to_string(), index_value);
-
     let data_size = (value.len() + key.len() + 8 * 2) as u64;
-    let index_value = Index {
-      offset: self.byte_offset,
-      file_id: self.current_file_id,
-    };
 
     self.data_index.insert(key.to_string(), index_value);
     self.byte_offset += data_size;
@@ -200,7 +237,7 @@ impl LogFile {
       value_buf: value.as_bytes().to_vec(),
     })?;
 
-    info!("[UPDATE]", index_value = value);
+    info!("[READ]", key = key.to_string(), value = value);
 
     Ok(())
   }
@@ -215,7 +252,7 @@ impl LogFile {
     self.insert_index_value(index)?;
     self.data_index.remove(id);
 
-    info!("[DELETE]", index_value = value);
+    info!("[DELETE]", key = id.to_string(), value = value);
     Ok("".to_string())
   }
 
@@ -237,25 +274,30 @@ impl LogFile {
     );
     let mut temp_file = File::create(&temp_file_path)?;
 
+    // Keep record layout identical to append: ts, key_size, value_size, key, value.
     for (_, value) in end_file.iter() {
       temp_file.write_all(&value.timestamp.to_le_bytes())?;
       temp_file.write_all(&value.key_size.to_le_bytes())?;
-      temp_file.write_all(&value.key_buf)?;
       temp_file.write_all(&value.value_size.to_le_bytes())?;
+      temp_file.write_all(&value.key_buf)?;
       temp_file.write_all(&value.value_buf)?;
+
+      // CRASH SAFETY HERE
+      temp_file.sync_all()?; // durability guarantee
     }
 
     temp_file.flush()?;
-    let path = format!("./tmp/log-file-{}", self.current_file_id + 1);
 
-    drop(temp_file);
-    fs::rename(&temp_file_path, &path)?;
-
+    self.current_file_id = 0;
+    let path = format!("./tmp/log-file-{}", self.current_file_id);
     for (_, path) in self.file_index.iter() {
       fs::remove_file(path)?;
     }
 
-    self.current_file_id += 1;
+    drop(temp_file);
+    fs::rename(&temp_file_path, &path)?;
+
+    self.path = path.clone();
     self.file_index.insert(self.current_file_id, path);
 
     info!("[COMPACT] Compaction has been completed successfully.");
@@ -298,6 +340,11 @@ impl LogFile {
     file.write_all(&meta.value_size.to_le_bytes())?;
     file.write_all(&meta.key_buf)?;
     file.write_all(&meta.value_buf)?;
+
+    // CRASH SAFETY HERE
+    file.sync_all()?; // durability guarantee
+
+    // FILE SEGMENTATION HERE
     self.split()?;
 
     Ok(())
@@ -329,6 +376,14 @@ impl LogFile {
     file.read_exact_at(&mut value_size_buf, *offset)?;
     let value_size = u64::from_le_bytes(value_size_buf) as usize;
     *offset += 8;
+
+    let file_size = file.metadata()?.size();
+    if *offset + key_size as u64 + value_size as u64 > file_size {
+      return Err(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        "Corrupted record: claimed size exceeds file",
+      ));
+    }
 
     let mut key_buf = vec![0u8; key_size];
     file.read_exact_at(&mut key_buf, *offset)?;
