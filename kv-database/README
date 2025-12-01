@@ -1,10 +1,14 @@
 @kv-database
 ==============
 
+The origin of Bitcask is tied to the history of the Riak distributed database. In a Riak key/value 
+cluster, each node uses pluggable local storage; nearly anything k/v-shaped can be used as the 
+per-host storage engine. This pluggability allowed progress on Riak to be parallelized such that 
+storage engines could be improved and tested without impact on the rest of the codebase.
+
+You can read more about this here: https://riak.com/assets/bitcask-intro.pdf
 
 
-- [ ] append only log file csv type format
-- [ ] when we delete we gonna insert a tombstone
-- [ ] we should split the log file in to multiple segments
-- [ ] we should have a spawned thread that will handle the compaction
-
+NOTE:
+- [ ] missing crash recovery
+- [ ] instead of binary files use cache files to get more performance

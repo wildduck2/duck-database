@@ -1,0 +1,10 @@
+# rustfmt.toml
+
+# Indentation
+hard_tabs = false
+tab_spaces = 2
+
+# Line width
+max_width = 100
+
+match_arm_leading_pipes = "Preserve"

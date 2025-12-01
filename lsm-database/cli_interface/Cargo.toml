@@ -1,0 +1,16 @@
+[package]
+name = "cli_interface"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+core_engine = { path = "../core_engine" }
+ttlog.workspace = true
+serde.workspace = true
+serde_json.workspace = true

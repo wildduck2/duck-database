@@ -1,12 +1,12 @@
 use std::{
   collections::HashMap,
   fs::{self, File, OpenOptions},
-  io::{self, Write},
+  io::{self, Read, Write},
   os::unix::fs::{FileExt, MetadataExt},
-  sync::{Arc, Mutex, MutexGuard},
+  sync::{Arc, Mutex},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde;
 use ttlog::ttlog_macros::{error, info, trace};
 
@@ -60,8 +60,9 @@ impl LogFile {
     }
   }
 
-  fn read_hint_file(&self, inner: &mut MutexGuard<'_, Inner>) -> Result<(), std::io::Error> {
-    let path = format!("./tmp/hint-{}", inner.current_file_id);
+  fn read_hint_file(&self) -> Result<(), std::io::Error> {
+    let mut inner = self.inner.lock().unwrap();
+    let path = format!("./tmp/hint-{}.log", inner.current_file_id);
     if !fs::exists(&path)? {
       return Ok(());
     }
@@ -109,12 +110,13 @@ impl LogFile {
     Ok(())
   }
 
-  pub fn start(&self) -> Result<&Self, std::io::Error> {
+  pub fn start(&self) -> Result<(), std::io::Error> {
     fs::create_dir_all("tmp")?;
 
     // regenrate the index from the hint file
+    self.read_hint_file()?;
+
     let mut inner = self.inner.lock().unwrap();
-    self.read_hint_file(&mut inner)?;
 
     // regenrate the index from the file list
     let mut files = fs::read_dir("./tmp")?
@@ -206,7 +208,8 @@ impl LogFile {
 
     drop(inner);
 
-    Ok(self)
+    self.create()?;
+    Ok(())
   }
 
   pub fn create(&self) -> Result<(), std::io::Error> {
@@ -227,7 +230,7 @@ impl LogFile {
     Ok(())
   }
 
-  pub fn append(&self, key: &str, value: &str) -> Result<&Self, io::Error> {
+  pub fn append(&self, key: &str, value: &str) -> Result<(), io::Error> {
     let mut inner = self.inner.lock().unwrap();
     if key.is_empty() {
       error!("The index length should be at least 1 character");
@@ -245,19 +248,17 @@ impl LogFile {
 
     let timestamp = Utc::now().timestamp_nanos_opt().unwrap();
 
-    self.insert_index_value(
-      MetaIndex {
-        timestamp,
-        key_size: key.len(),
-        key_buf: key.as_bytes().to_vec(),
-        value_size: value.len(),
-        value_buf: value.as_bytes().to_vec(),
-      },
-      &mut inner,
-    )?;
+    drop(inner);
+    self.insert_index_value(MetaIndex {
+      timestamp,
+      key_size: key.len(),
+      key_buf: key.as_bytes().to_vec(),
+      value_size: value.len(),
+      value_buf: value.as_bytes().to_vec(),
+    })?;
 
     info!("[WRITE]", index_value = value.to_string());
-    Ok(self)
+    Ok(())
   }
 
   pub fn read(&self, id: &str) -> Result<String, io::Error> {
@@ -275,7 +276,7 @@ impl LogFile {
     Ok(value)
   }
 
-  pub fn update(&self, key: &str, value: &str) -> Result<String, io::Error> {
+  pub fn update(&self, key: &str, value: &'static str) -> Result<(), io::Error> {
     let mut inner = self.inner.lock().unwrap();
     if key.is_empty() {
       error!("The index length should be at least 1 character");
@@ -298,39 +299,35 @@ impl LogFile {
 
     let timestamp = Utc::now().timestamp();
 
-    // drop(inner);
-    self.insert_index_value(
-      MetaIndex {
-        timestamp,
-        key_size: key.len(),
-        key_buf: key.as_bytes().to_vec(),
-        value_size: value.len(),
-        value_buf: value.as_bytes().to_vec(),
-      },
-      &mut inner,
-    )?;
+    drop(inner);
+    self.insert_index_value(MetaIndex {
+      timestamp,
+      key_size: key.len(),
+      key_buf: key.as_bytes().to_vec(),
+      value_size: value.len(),
+      value_buf: value.as_bytes().to_vec(),
+    })?;
 
-    info!("[UPDATE]", key = key.to_string(), value = value.to_string());
+    info!("[UPDATE]", key = key.to_string(), value = value);
 
-    Ok(value.to_string())
+    Ok(())
   }
 
-  pub fn delete(&self, id: &str) -> Result<String, io::Error> {
-    let mut inner = self.inner.lock().unwrap();
+  pub fn delete(&self, id: &str) -> Result<(), io::Error> {
     let mut index = self.get_index_value(id)?;
     let value = String::from_utf8(index.value_buf.clone())
       .unwrap()
       .to_string();
     index.value_size = 0;
     index.value_buf.clear();
-    self.insert_index_value(index, &mut inner)?;
-    inner.data_index.remove(id);
+    self.insert_index_value(index)?;
+    self.inner.lock().unwrap().data_index.remove(id);
 
     info!("[DELETE]", key = id.to_string(), value = value);
-    Ok(value.to_string())
+    Ok(())
   }
 
-  pub fn compact(&self) -> Result<&Self, io::Error> {
+  pub fn compact(&self) -> Result<(), io::Error> {
     let new_hash = std::mem::take(&mut self.inner.lock().unwrap().file_index);
     let mut end_file = HashMap::<String, MetaIndex>::new();
     let mut sorted_file_ids = new_hash.keys().collect::<Vec<_>>();
@@ -338,11 +335,9 @@ impl LogFile {
 
     for &file_id in sorted_file_ids {
       let file_idx = new_hash.get(&file_id).unwrap();
-      self.compact_file(&mut end_file, file_idx)?;
+      self.compact_file(&mut end_file, file_idx)?
     }
-
-    let mut inner = self.inner.lock().unwrap();
-    let _ = core::mem::replace(&mut inner.file_index, new_hash);
+    let _ = core::mem::replace(&mut self.inner.lock().unwrap().file_index, new_hash);
 
     let temp_file_path = format!(
       "./tmp/temp-log-file-{}",
@@ -350,13 +345,8 @@ impl LogFile {
     );
     let mut temp_file = File::create(&temp_file_path)?;
 
-    let mut offset = 0;
-    let mut final_data_index = HashMap::<String, Index>::new();
-
     // Keep record layout identical to append: ts, key_size, value_size, key, value.
-    for (key, value) in end_file.into_iter() {
-      final_data_index.insert(key, Index { offset, file_id: 1 });
-
+    for (_, value) in end_file.iter() {
       temp_file.write_all(&value.timestamp.to_le_bytes())?;
       temp_file.write_all(&value.key_size.to_le_bytes())?;
       temp_file.write_all(&value.value_size.to_le_bytes())?;
@@ -365,38 +355,36 @@ impl LogFile {
 
       // CRASH SAFETY HERE
       temp_file.sync_all()?; // durability guarantee
-      offset += (value.key_size + value.value_size) as u64 + 8 * 3;
     }
 
     temp_file.flush()?;
 
-    inner.current_file_id = 1;
-    let path = format!("./tmp/log-file-{}", inner.current_file_id);
-
-    // Clear the index file and remove the old files
-    for (_, path) in inner.file_index.iter() {
+    self.inner.lock().unwrap().current_file_id = 1;
+    let path = format!(
+      "./tmp/log-file-{}.log",
+      self.inner.lock().unwrap().current_file_id
+    );
+    for (_, path) in self.inner.lock().unwrap().file_index.iter() {
       fs::remove_file(path)?;
     }
-    inner.file_index.clear();
 
     drop(temp_file);
     fs::rename(&temp_file_path, &path)?;
 
+    let mut inner = self.inner.lock().unwrap();
     let current_file_id = inner.current_file_id;
     inner.path = path.clone();
     inner.file_index.insert(current_file_id, path);
-    inner.data_index = final_data_index;
     info!("[COMPACT] Compaction has been completed successfully.");
 
     drop(inner);
-
     self.write_hint_file()?;
-    Ok(self)
+    Ok(())
   }
 
-  fn write_hint_file(&self) -> Result<&Self, io::Error> {
+  fn write_hint_file(&self) -> Result<(), io::Error> {
     let inner = self.inner.lock().unwrap();
-    let path = format!("./tmp/hint-{}", inner.current_file_id);
+    let path = format!("./tmp/hint-{}.log", inner.current_file_id);
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     for (key, value) in inner.data_index.iter() {
@@ -410,14 +398,14 @@ impl LogFile {
 
     info!("[HINT] Hint file has been written successfully.");
 
-    Ok(self)
+    Ok(())
   }
 
   fn compact_file(
     &self,
     end_file: &mut HashMap<String, MetaIndex>,
     file_idx: &String,
-  ) -> Result<&Self, io::Error> {
+  ) -> Result<(), io::Error> {
     let mut offset = 0;
     let file = File::open(file_idx)?;
     let meta_data = fs::metadata(file_idx)?;
@@ -438,15 +426,13 @@ impl LogFile {
       end_file.insert(key, meta);
     }
 
-    Ok(self)
+    Ok(())
   }
 
-  fn insert_index_value(
-    &self,
-    meta: MetaIndex,
-    inner: &mut MutexGuard<'_, Inner>,
-  ) -> Result<&Self, io::Error> {
-    let mut file = OpenOptions::new().append(true).open(&inner.path)?;
+  fn insert_index_value(&self, meta: MetaIndex) -> Result<(), io::Error> {
+    let mut file = OpenOptions::new()
+      .append(true)
+      .open(&self.inner.lock().unwrap().path)?;
 
     file.write_all(&meta.timestamp.to_le_bytes())?;
     file.write_all(&meta.key_size.to_le_bytes())?;
@@ -458,9 +444,9 @@ impl LogFile {
     file.sync_all()?; // durability guarantee
 
     // FILE SEGMENTATION HERE
-    self.split(inner)?;
+    self.split()?;
 
-    Ok(self)
+    Ok(())
   }
 
   fn get_index_value(&self, id: &str) -> Result<MetaIndex, io::Error> {
@@ -518,8 +504,8 @@ impl LogFile {
     })
   }
 
-  fn split(&self, inner: &mut MutexGuard<'_, Inner>) -> Result<&Self, io::Error> {
-    let metadata = fs::metadata(&inner.path)?;
+  fn split(&self) -> Result<(), io::Error> {
+    let metadata = fs::metadata(&self.inner.lock().unwrap().path)?;
 
     if metadata.size() > FILE_THRESHOLD {
       trace!(
@@ -528,9 +514,9 @@ impl LogFile {
         file_size = metadata.size()
       );
 
-      inner.current_file_id += 1;
+      self.inner.lock().unwrap().current_file_id += 1;
       self.create()?;
     }
-    Ok(self)
+    Ok(())
   }
 }
