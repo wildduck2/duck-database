@@ -6,7 +6,12 @@ use ttlog::{file_listener::FileListener, stdout_listener::StdoutListener, trace:
 const PERIODIC_COMPACTION_INTERVAL: u64 = 60 * 10;
 
 fn main() -> Result<(), std::io::Error> {
-  let mut log_file = log_file::LogFile::new();
+  let trace = Trace::init(2, 64, "test", Some("./tmp"));
+  trace.add_listener(Arc::new(FileListener::new("./tmp/ttlog.log")?));
+  trace.add_listener(Arc::new(StdoutListener::new()));
+  trace.set_level(ttlog::event::LogLevel::TRACE);
+
+  let log_file = log_file::LogFile::new();
 
   log_file.start()?;
 
@@ -20,6 +25,8 @@ fn main() -> Result<(), std::io::Error> {
   log_file.delete("123:1")?;
   log_file.update("123:5", "{\"name\":\"wildduck\",\"age\":28}")?;
   log_file.read("123:400")?;
+  log_file.read("123:1")?;
+  log_file.read("123:5")?;
 
   let handle = std::thread::spawn(move || loop {
     let _ = log_file.compact();

@@ -1,12 +1,12 @@
 use std::{
   collections::HashMap,
   fs::{self, File, OpenOptions},
-  io::{self, Write},
+  io::{self, Read, Write},
   os::unix::fs::{FileExt, MetadataExt},
   sync::{Arc, Mutex},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use serde;
 use ttlog::ttlog_macros::{error, info, trace};
 
@@ -60,10 +60,65 @@ impl LogFile {
     }
   }
 
-  pub fn start(&self) -> Result<(), std::io::Error> {
+  fn read_hint_file(&self) -> Result<(), std::io::Error> {
     let mut inner = self.inner.lock().unwrap();
+    let path = format!("./tmp/hint-{}.log", inner.current_file_id);
+    if !fs::exists(&path)? {
+      return Ok(());
+    }
+
+    let hint_file = OpenOptions::new().read(true).open(&path)?;
+    let mut offset = 0;
+
+    loop {
+      if fs::metadata(&path)?.size() <= offset {
+        break;
+      }
+
+      let mut key_size_buf = [0u8; 8];
+      hint_file.read_exact_at(&mut key_size_buf, offset)?;
+      let key_size = u64::from_le_bytes(key_size_buf);
+      offset += 8;
+
+      let mut key_buf = vec![0u8; key_size as usize];
+      hint_file.read_exact_at(&mut key_buf, offset)?;
+      let key_value = String::from_utf8(key_buf.clone()).unwrap();
+      offset += key_size;
+
+      // adding because here we read the timestamp
+      offset += 8;
+
+      let mut file_id_buf = [0u8; 8];
+      hint_file.read_exact_at(&mut file_id_buf, offset)?;
+      let file_id = u64::from_le_bytes(file_id_buf);
+      offset += 8;
+
+      let mut offset_buf = [0u8; 8];
+      hint_file.read_exact_at(&mut offset_buf, offset)?;
+      let offset_value = u64::from_le_bytes(offset_buf);
+      offset += 8;
+
+      inner.data_index.insert(
+        key_value,
+        Index {
+          offset: offset_value,
+          file_id,
+        },
+      );
+    }
+
+    Ok(())
+  }
+
+  pub fn start(&self) -> Result<(), std::io::Error> {
     fs::create_dir_all("tmp")?;
 
+    // regenrate the index from the hint file
+    self.read_hint_file()?;
+
+    let mut inner = self.inner.lock().unwrap();
+
+    // regenrate the index from the file list
     let mut files = fs::read_dir("./tmp")?
       .filter_map(|entry| entry.ok())
       .filter_map(|entry| {
@@ -149,7 +204,9 @@ impl LogFile {
           .unwrap()
       })
       .unwrap_or(0x1);
-    self.inner.lock().unwrap().current_file_id = id + 1;
+    inner.current_file_id = id + 1;
+
+    drop(inner);
 
     self.create()?;
     Ok(())
@@ -251,12 +308,12 @@ impl LogFile {
       value_buf: value.as_bytes().to_vec(),
     })?;
 
-    info!("[READ]", key = key.to_string(), value = value);
+    info!("[UPDATE]", key = key.to_string(), value = value);
 
     Ok(())
   }
 
-  pub fn delete(&self, id: &str) -> Result<String, io::Error> {
+  pub fn delete(&self, id: &str) -> Result<(), io::Error> {
     let mut index = self.get_index_value(id)?;
     let value = String::from_utf8(index.value_buf.clone())
       .unwrap()
@@ -267,7 +324,7 @@ impl LogFile {
     self.inner.lock().unwrap().data_index.remove(id);
 
     info!("[DELETE]", key = id.to_string(), value = value);
-    Ok("".to_string())
+    Ok(())
   }
 
   pub fn compact(&self) -> Result<(), io::Error> {
@@ -302,9 +359,9 @@ impl LogFile {
 
     temp_file.flush()?;
 
-    self.inner.lock().unwrap().current_file_id = 0;
+    self.inner.lock().unwrap().current_file_id = 1;
     let path = format!(
-      "./tmp/log-file-{}",
+      "./tmp/log-file-{}.log",
       self.inner.lock().unwrap().current_file_id
     );
     for (_, path) in self.inner.lock().unwrap().file_index.iter() {
@@ -314,15 +371,33 @@ impl LogFile {
     drop(temp_file);
     fs::rename(&temp_file_path, &path)?;
 
-    self.inner.lock().unwrap().path = path.clone();
-    self
-      .inner
-      .lock()
-      .unwrap()
-      .file_index
-      .insert(self.inner.lock().unwrap().current_file_id, path);
-
+    let mut inner = self.inner.lock().unwrap();
+    let current_file_id = inner.current_file_id;
+    inner.path = path.clone();
+    inner.file_index.insert(current_file_id, path);
     info!("[COMPACT] Compaction has been completed successfully.");
+
+    drop(inner);
+    self.write_hint_file()?;
+    Ok(())
+  }
+
+  fn write_hint_file(&self) -> Result<(), io::Error> {
+    let inner = self.inner.lock().unwrap();
+    let path = format!("./tmp/hint-{}.log", inner.current_file_id);
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
+
+    for (key, value) in inner.data_index.iter() {
+      let timestamp = Utc::now().timestamp();
+      file.write_all(&key.len().to_le_bytes())?;
+      file.write_all(key.as_bytes())?;
+      file.write_all(&timestamp.to_le_bytes())?;
+      file.write_all(&value.file_id.to_le_bytes())?;
+      file.write_all(&value.offset.to_le_bytes())?;
+    }
+
+    info!("[HINT] Hint file has been written successfully.");
+
     Ok(())
   }
 
