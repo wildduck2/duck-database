@@ -3,6 +3,7 @@ use std::{
   fs::{self, File, OpenOptions},
   io::{self, Write},
   os::unix::fs::{FileExt, MetadataExt},
+  sync::{Arc, Mutex},
 };
 
 use chrono::Utc;
@@ -28,11 +29,16 @@ struct Index {
 
 #[derive(Debug)]
 pub struct LogFile {
+  inner: Arc<Mutex<Inner>>,
+}
+
+#[derive(Debug)]
+struct Inner {
   byte_offset: u64,
-  pub current_file_id: u64,
+  current_file_id: u64,
   path: String,
   data_index: HashMap<String, Index>,
-  pub file_index: HashMap<u64, String>,
+  file_index: HashMap<u64, String>,
 }
 
 impl Default for LogFile {
@@ -44,15 +50,18 @@ impl Default for LogFile {
 impl LogFile {
   pub fn new() -> Self {
     Self {
-      path: "".to_string(),
-      byte_offset: 0x1,
-      current_file_id: 0x1,
-      data_index: HashMap::new(),
-      file_index: HashMap::new(),
+      inner: Arc::new(Mutex::new(Inner {
+        path: "".to_string(),
+        byte_offset: 0x1,
+        current_file_id: 0x1,
+        data_index: HashMap::new(),
+        file_index: HashMap::new(),
+      })),
     }
   }
 
-  pub fn start(&mut self) -> Result<(), std::io::Error> {
+  pub fn start(&self) -> Result<(), std::io::Error> {
+    let mut inner = self.inner.lock().unwrap();
     fs::create_dir_all("tmp")?;
 
     let mut files = fs::read_dir("./tmp")?
@@ -98,7 +107,7 @@ impl LogFile {
         .unwrap();
       let metadata = fs::metadata(file_path)?;
 
-      self
+      inner
         .file_index
         .insert(file_id, file_path.to_str().unwrap().to_string());
 
@@ -118,11 +127,11 @@ impl LogFile {
         let key = String::from_utf8(meta.key_buf.clone()).unwrap();
 
         if meta.value_buf.is_empty() {
-          self.data_index.remove(&key);
+          inner.data_index.remove(&key);
           continue;
         }
 
-        self.data_index.insert(key, index);
+        inner.data_index.insert(key, index);
       }
     }
 
@@ -140,30 +149,32 @@ impl LogFile {
           .unwrap()
       })
       .unwrap_or(0x1);
-    self.current_file_id = id + 1;
+    self.inner.lock().unwrap().current_file_id = id + 1;
 
     self.create()?;
     Ok(())
   }
 
-  pub fn create(&mut self) -> Result<(), std::io::Error> {
-    let path = format!("./tmp/log-file-{}", self.current_file_id);
+  pub fn create(&self) -> Result<(), std::io::Error> {
+    let mut inner = self.inner.lock().unwrap();
+    let path = format!("./tmp/log-file-{}", inner.current_file_id);
 
     OpenOptions::new().create(true).append(true).open(&path)?;
-    self.path = path;
-    self
-      .file_index
-      .insert(self.current_file_id, self.path.clone());
-    self.byte_offset = 0;
+    inner.path = path;
+    let path = inner.path.clone();
+    let id = inner.current_file_id;
+    inner.file_index.insert(id, path);
+    inner.byte_offset = 0;
 
     trace!(
       "[LOGFILE] Log file has been created successfully.",
-      file_id = self.current_file_id
+      file_id = inner.current_file_id
     );
     Ok(())
   }
 
-  pub fn append(&mut self, key: &str, value: &str) -> Result<(), io::Error> {
+  pub fn append(&self, key: &str, value: &str) -> Result<(), io::Error> {
+    let mut inner = self.inner.lock().unwrap();
     if key.is_empty() {
       error!("The index length should be at least 1 character");
       return Err(io::Error::other(""));
@@ -171,15 +182,16 @@ impl LogFile {
 
     let data_size = (value.len() + key.len() + 8 * 3) as u64;
     let index_value = Index {
-      offset: self.byte_offset,
-      file_id: self.current_file_id,
+      offset: inner.byte_offset,
+      file_id: inner.current_file_id,
     };
 
-    self.data_index.insert(key.to_string(), index_value);
-    self.byte_offset += data_size;
+    inner.data_index.insert(key.to_string(), index_value);
+    inner.byte_offset += data_size;
 
     let timestamp = Utc::now().timestamp_nanos_opt().unwrap();
 
+    drop(inner);
     self.insert_index_value(MetaIndex {
       timestamp,
       key_size: key.len(),
@@ -192,8 +204,8 @@ impl LogFile {
     Ok(())
   }
 
-  pub fn read(&mut self, id: &str) -> Result<String, io::Error> {
-    if !self.data_index.contains_key(id) {
+  pub fn read(&self, id: &str) -> Result<String, io::Error> {
+    if !self.inner.lock().unwrap().data_index.contains_key(id) {
       return Err(io::Error::other("This key does not exist in the index"));
     }
 
@@ -207,28 +219,30 @@ impl LogFile {
     Ok(value)
   }
 
-  pub fn update(&mut self, key: &str, value: &'static str) -> Result<(), io::Error> {
+  pub fn update(&self, key: &str, value: &'static str) -> Result<(), io::Error> {
+    let mut inner = self.inner.lock().unwrap();
     if key.is_empty() {
       error!("The index length should be at least 1 character");
       return Err(io::Error::other(""));
     }
 
-    if !self.data_index.contains_key(key) {
+    if !inner.data_index.contains_key(key) {
       return Err(io::Error::other("This key does not exist in the index"));
     }
 
     let index_value = Index {
-      offset: self.byte_offset,
-      file_id: self.current_file_id,
+      offset: inner.byte_offset,
+      file_id: inner.current_file_id,
     };
 
     let data_size = (value.len() + key.len() + 8 * 2) as u64;
 
-    self.data_index.insert(key.to_string(), index_value);
-    self.byte_offset += data_size;
+    inner.data_index.insert(key.to_string(), index_value);
+    inner.byte_offset += data_size;
 
     let timestamp = Utc::now().timestamp();
 
+    drop(inner);
     self.insert_index_value(MetaIndex {
       timestamp,
       key_size: key.len(),
@@ -242,7 +256,7 @@ impl LogFile {
     Ok(())
   }
 
-  pub fn delete(&mut self, id: &str) -> Result<String, io::Error> {
+  pub fn delete(&self, id: &str) -> Result<String, io::Error> {
     let mut index = self.get_index_value(id)?;
     let value = String::from_utf8(index.value_buf.clone())
       .unwrap()
@@ -250,14 +264,14 @@ impl LogFile {
     index.value_size = 0;
     index.value_buf.clear();
     self.insert_index_value(index)?;
-    self.data_index.remove(id);
+    self.inner.lock().unwrap().data_index.remove(id);
 
     info!("[DELETE]", key = id.to_string(), value = value);
     Ok("".to_string())
   }
 
-  pub fn compact(&mut self) -> Result<(), io::Error> {
-    let new_hash = std::mem::take(&mut self.file_index);
+  pub fn compact(&self) -> Result<(), io::Error> {
+    let new_hash = std::mem::take(&mut self.inner.lock().unwrap().file_index);
     let mut end_file = HashMap::<String, MetaIndex>::new();
     let mut sorted_file_ids = new_hash.keys().collect::<Vec<_>>();
     sorted_file_ids.sort();
@@ -266,7 +280,7 @@ impl LogFile {
       let file_idx = new_hash.get(&file_id).unwrap();
       self.compact_file(&mut end_file, file_idx)?
     }
-    let _ = core::mem::replace(&mut self.file_index, new_hash);
+    let _ = core::mem::replace(&mut self.inner.lock().unwrap().file_index, new_hash);
 
     let temp_file_path = format!(
       "./tmp/temp-log-file-{}",
@@ -288,24 +302,32 @@ impl LogFile {
 
     temp_file.flush()?;
 
-    self.current_file_id = 0;
-    let path = format!("./tmp/log-file-{}", self.current_file_id);
-    for (_, path) in self.file_index.iter() {
+    self.inner.lock().unwrap().current_file_id = 0;
+    let path = format!(
+      "./tmp/log-file-{}",
+      self.inner.lock().unwrap().current_file_id
+    );
+    for (_, path) in self.inner.lock().unwrap().file_index.iter() {
       fs::remove_file(path)?;
     }
 
     drop(temp_file);
     fs::rename(&temp_file_path, &path)?;
 
-    self.path = path.clone();
-    self.file_index.insert(self.current_file_id, path);
+    self.inner.lock().unwrap().path = path.clone();
+    self
+      .inner
+      .lock()
+      .unwrap()
+      .file_index
+      .insert(self.inner.lock().unwrap().current_file_id, path);
 
     info!("[COMPACT] Compaction has been completed successfully.");
     Ok(())
   }
 
   fn compact_file(
-    &mut self,
+    &self,
     end_file: &mut HashMap<String, MetaIndex>,
     file_idx: &String,
   ) -> Result<(), io::Error> {
@@ -332,8 +354,10 @@ impl LogFile {
     Ok(())
   }
 
-  fn insert_index_value(&mut self, meta: MetaIndex) -> Result<(), io::Error> {
-    let mut file = OpenOptions::new().append(true).open(&self.path)?;
+  fn insert_index_value(&self, meta: MetaIndex) -> Result<(), io::Error> {
+    let mut file = OpenOptions::new()
+      .append(true)
+      .open(&self.inner.lock().unwrap().path)?;
 
     file.write_all(&meta.timestamp.to_le_bytes())?;
     file.write_all(&meta.key_size.to_le_bytes())?;
@@ -350,18 +374,21 @@ impl LogFile {
     Ok(())
   }
 
-  fn get_index_value(&mut self, id: &str) -> Result<MetaIndex, io::Error> {
-    if !self.data_index.contains_key(id) {
+  fn get_index_value(&self, id: &str) -> Result<MetaIndex, io::Error> {
+    let inner = self.inner.lock().unwrap();
+    if !inner.data_index.contains_key(id) {
       return Err(io::Error::other(""));
     }
 
-    let index = self.data_index.get(id).unwrap();
-    let file = File::open(self.file_index.get(&index.file_id).unwrap())?;
+    let index = inner.data_index.get(id).unwrap();
+    let file = File::open(inner.file_index.get(&index.file_id).unwrap())?;
     let mut offset = index.offset;
+
+    drop(inner);
     self.get_index_from_file(&mut offset, &file)
   }
 
-  fn get_index_from_file(&mut self, offset: &mut u64, file: &File) -> Result<MetaIndex, io::Error> {
+  fn get_index_from_file(&self, offset: &mut u64, file: &File) -> Result<MetaIndex, io::Error> {
     let mut ts_buff = [0u8; 8];
     file.read_exact_at(&mut ts_buff, *offset)?;
     let timestamp = i64::from_le_bytes(ts_buff);
@@ -402,8 +429,8 @@ impl LogFile {
     })
   }
 
-  fn split(&mut self) -> Result<(), io::Error> {
-    let metadata = fs::metadata(&self.path)?;
+  fn split(&self) -> Result<(), io::Error> {
+    let metadata = fs::metadata(&self.inner.lock().unwrap().path)?;
 
     if metadata.size() > FILE_THRESHOLD {
       trace!(
@@ -412,7 +439,7 @@ impl LogFile {
         file_size = metadata.size()
       );
 
-      self.current_file_id += 1;
+      self.inner.lock().unwrap().current_file_id += 1;
       self.create()?;
     }
     Ok(())
