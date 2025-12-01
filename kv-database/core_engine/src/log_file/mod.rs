@@ -52,6 +52,56 @@ impl LogFile {
     }
   }
 
+  pub fn start(&mut self) -> Result<(), std::io::Error> {
+    let files = fs::read_dir("./tmp")?
+      .filter_map(|entry| entry.ok())
+      .filter_map(|entry| {
+        let path = entry.path();
+        let file_name = path.file_name()?.to_str()?;
+
+        // check the prefix
+        if let Some(number_str) = file_name.strip_prefix("log-file-") {
+          // check that the rest is a number
+          if number_str.parse::<u64>().is_ok() {
+            return Some(path);
+          }
+        }
+
+        None
+      })
+      .collect::<Vec<_>>();
+
+    for file_path in files {
+      let file = File::open(&file_path)?;
+      let metadata = fs::metadata(file_path)?;
+      let mut offset = 0;
+
+      loop {
+        if metadata.size() <= offset {
+          break;
+        }
+
+        let index = Index {
+          offset,
+          file_id: self.current_file_id,
+        };
+
+        let meta = self.get_index_from_file(&mut offset, &file)?;
+        let key = String::from_utf8(meta.key_buf.clone()).unwrap();
+
+        if meta.value_buf.is_empty() {
+          self.data_index.remove(&key);
+          continue;
+        }
+
+        self.data_index.insert(key, index);
+      }
+    }
+    println!("{:#?}", self.data_index);
+
+    Ok(())
+  }
+
   pub fn create(&mut self) -> Result<(), std::io::Error> {
     fs::create_dir_all("tmp")?;
     let path = format!("./tmp/log-file-{}", self.current_file_id);
@@ -110,7 +160,7 @@ impl LogFile {
     // let timestamp = timestamp.unwrap().to_string();
     // let index_key_value = String::from_utf8(index.key_buf).unwrap().to_string();
     let index_value_value = String::from_utf8(index.value_buf).unwrap().to_string();
-    info!("[READ]", index_value = index_value_value);
+    info!("[READ]", value = index_value_value);
     Ok(index_value_value)
   }
 
