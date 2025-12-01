@@ -9,6 +9,6 @@ storage engines could be improved and tested without impact on the rest of the c
 You can read more about this here: https://riak.com/assets/bitcask-intro.pdf
 
 
-NOTE:
-- [ ] missing crash recovery
-- [ ] instead of binary files use cache files to get more performance
+DISCLAIMER:
+IF YOU THINK THIS IS COOL YOU CAN GIVE IT A STAR 
+DO NOT CRY ABOUT IT I LIKE WHAT I DO AND I DOES NOT MATTER.
