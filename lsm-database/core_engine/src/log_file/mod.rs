@@ -8,12 +8,7 @@ use std::{
 
 use chrono::Utc;
 use serde;
-use ttlog::{
-  file_listener::FileListener,
-  stdout_listener::StdoutListener,
-  trace::Trace,
-  ttlog_macros::{error, info, trace},
-};
+use ttlog::ttlog_macros::{error, info, trace};
 
 const FILE_THRESHOLD: u64 = 1024; // 1KB
 pub const PERIODIC_COMPACTION_INTERVAL: u64 = 60 * 10; // 10 minutes

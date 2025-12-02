@@ -1,2 +1,266 @@
-@kv-database
+@lsm-database
 ==============
+
+
+- [ ] we need to sort the keys within the compaction process
+- [ ] we gonna replace the index with more efficient data structure which will store the ranges. 
+- [ ] group the keys into buckets and sort the buckets by the timestamp.
+- [ ] compress the data to reduce the size of the file.
+- [ ] read more about red-black tree and AVL tree.
+
+
+STEPS
+=====
+
+1. When you want to insert a new record, you need to insert it in the memtable.
+2. When the memtable larger than the threshold, you need to flush the memtable to desk as SSTable.
+3. The new SSTable will become the most recent segment of the database.
+4. While that is happening, write can happen in a new memtable.
+
+5. When reading, check the memtable then the first SSTable, then the second SSTable and so on.
+6. From time to time, we need to compact the database.
+
+
+TODO
+====
+
+1. We need to implement the memtable:
+  - Every node is either red or black.
+  - The root is always black.
+  - All leaves which are the null or sentinel nodes are black.
+  - Red nodes cannot have red children.
+  - Every path from a node to its descendant leaves has the same number of black nodes. This count
+    is called the black height.
+
+Here is a simpler low level todo list that you can follow step by step without needing any tree theory in your head. Think of it like building blocks. Just follow the order and you will end up with a working red black tree.
+
+Nothing fancy. No jumps. No tricks.
+
+---
+
+# Step 1 create the basic node structure
+
+1. Make a Node type with these fields
+
+   * key
+   * value
+   * color boolean true for red false for black
+   * parent pointer
+   * left pointer
+   * right pointer
+2. Make one shared sentinel node
+
+   * color black
+   * parent left right are null
+3. Every normal node will use this sentinel for missing children
+
+---
+
+# Step 2 create the tree container
+
+1. Make a Tree type with
+
+   * root pointer
+   * sentinel pointer
+   * size counter
+2. At creation
+
+   * root is sentinel
+   * size is zero
+
+---
+
+# Step 3 implement left rotate and right rotate
+
+These are the hardest part so do them early.
+
+Left rotate around node x:
+
+1. Let y be x.right
+2. Set x.right to y.left
+3. If y.left is not sentinel set y.left.parent to x
+4. Set y.parent to x.parent
+5. If x.parent is sentinel set tree.root to y
+   else if x is left child of parent set parent.left to y
+   else set parent.right to y
+6. Set y.left to x
+7. Set x.parent to y
+
+Right rotate is symmetric:
+
+1. Let y be x.left
+2. Set x.left to y.right
+3. If y.right is not sentinel set y.right.parent to x
+4. Set y.parent to x.parent
+5. If x.parent is sentinel set tree.root to y
+   else if x is right child set parent.right to y
+   else set parent.left to y
+6. Set y.right to x
+7. Set x.parent to y
+
+Do not worry about correctness now. Just implement the steps exactly.
+
+---
+
+# Step 4 implement simple BST insert
+
+1. Make a new node n
+2. Set n.left and n.right to sentinel
+3. Set n.color to red
+4. Walk the tree from root to find where key belongs
+
+   * Keep a variable p as parent
+   * Move left or right until you hit sentinel
+5. Set n.parent to p
+6. If p is sentinel set root to n
+   else if n.key < p.key set p.left to n
+   else set p.right to n
+7. size plus one
+
+This inserts the node but does not balance it yet.
+
+---
+
+# Step 5 implement insert fix up
+
+You will run this after every insert.
+
+Let n be the node you inserted.
+
+While n.parent is red do:
+
+1. If parent is left child of grandparent
+
+   * Let uncle be grandparent.right
+   * If uncle is red
+
+     * parent becomes black
+     * uncle becomes black
+     * grandparent becomes red
+     * n becomes grandparent and loop continues
+   * Else uncle is black
+
+     * If n is right child
+
+       * n becomes parent
+       * left rotate on n
+     * parent becomes black
+     * grandparent becomes red
+     * right rotate on grandparent
+2. Else parent is right child of grandparent symmetric
+
+   * uncle is grandparent.left
+   * Same cases but with left and right swapped
+
+After loop set root color to black.
+
+---
+
+# Step 6 implement search
+
+1. Start at root
+2. Compare key
+3. Move left or right
+4. If hit sentinel return not found
+
+Simple.
+
+---
+
+# Step 7 implement deletion
+
+Start small before the full fix up.
+
+### Part A find the node
+
+1. Search for key
+2. If not found done
+3. Let target be that node
+
+### Part B pick the node to remove
+
+If target has zero or one non sentinel child
+
+* removed node is target
+  Else
+* find in order successor
+* swap key and value with target
+* now target has zero or one non sentinel child
+* removed node is the successor
+
+### Part C reconnect child
+
+Let child be removed.left if not sentinel else removed.right
+
+1. Set child.parent to removed.parent
+2. If removed.parent is sentinel set root to child
+   else if removed is left child set parent.left to child
+   else set parent.right to child
+
+Now removed is out of the tree.
+
+If removed.color is red
+
+* done
+  Else
+* call deletion fix up on child
+
+---
+
+# Step 8 deletion fix up
+
+Let x be the child that replaced the removed node.
+
+While x is not root and x.color is black:
+
+1. If x is left child
+
+   * sibling is parent.right
+   * If sibling is red
+
+     * sibling becomes black
+     * parent becomes red
+     * left rotate on parent
+     * update sibling new sibling is parent.right
+   * If sibling.left and sibling.right are black
+
+     * sibling becomes red
+     * x becomes parent and loop continues
+   * Else
+
+     * If sibling.right is black
+
+       * sibling.left becomes black
+       * sibling becomes red
+       * right rotate on sibling
+       * update sibling new sibling is parent.right
+     * sibling.color becomes parent.color
+     * parent becomes black
+     * sibling.right becomes black
+     * left rotate on parent
+     * set x to root to break loop
+2. Else x is right child symmetric
+
+   * same logic swapping left and right
+
+After loop set x.color to black.
+
+---
+
+# Step 9 test the three smallest cases
+
+Do these manually by hand:
+
+1. Insert one element
+2. Insert two elements
+3. Insert three elements in sorted order
+4. Delete leaf
+5. Delete node with one child
+6. Delete root
+
+Once these work most of your logic is right.
+
+---
+
+If you want I can generate a tiny starter code file in any language that follows these exact steps line by line.
+
