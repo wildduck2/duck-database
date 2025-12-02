@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use core_engine::log_file;
+use core_engine::log_file::{self, PERIODIC_COMPACTION_INTERVAL};
 use ttlog::{file_listener::FileListener, stdout_listener::StdoutListener, trace::Trace};
-
-const PERIODIC_COMPACTION_INTERVAL: u64 = 60 * 10;
 
 fn main() -> Result<(), std::io::Error> {
   let trace = Trace::init(2, 64, "test", Some("./tmp"));
@@ -11,9 +9,8 @@ fn main() -> Result<(), std::io::Error> {
   trace.add_listener(Arc::new(StdoutListener::new()));
   trace.set_level(ttlog::event::LogLevel::TRACE);
 
-  let log_file = log_file::LogFile::new();
-
-  log_file.start()?.create()?;
+  let log_file = log_file::LogFile::new()?;
+  log_file.start()?;
 
   for i in 0..4 {
     log_file.append(
@@ -37,5 +34,6 @@ fn main() -> Result<(), std::io::Error> {
   });
 
   let _ = handle.join();
+
   Ok(())
 }
