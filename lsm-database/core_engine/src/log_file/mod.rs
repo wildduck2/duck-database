@@ -1,16 +1,22 @@
 use std::{
   collections::HashMap,
   fs::{self, File, OpenOptions},
-  io::{self, Read, Write},
+  io::{self, Write},
   os::unix::fs::{FileExt, MetadataExt},
-  sync::{Arc, Mutex},
+  sync::{Arc, Mutex, MutexGuard},
 };
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::Utc;
 use serde;
-use ttlog::ttlog_macros::{error, info, trace};
+use ttlog::{
+  file_listener::FileListener,
+  stdout_listener::StdoutListener,
+  trace::Trace,
+  ttlog_macros::{error, info, trace},
+};
 
 const FILE_THRESHOLD: u64 = 1024; // 1KB
+pub const PERIODIC_COMPACTION_INTERVAL: u64 = 60 * 10; // 10 minutes
 
 #[derive(Debug)]
 struct MetaIndex {
@@ -27,7 +33,7 @@ struct Index {
   offset: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LogFile {
   inner: Arc<Mutex<Inner>>,
 }
@@ -41,15 +47,9 @@ struct Inner {
   file_index: HashMap<u64, String>,
 }
 
-impl Default for LogFile {
-  fn default() -> Self {
-    Self::new()
-  }
-}
-
 impl LogFile {
-  pub fn new() -> Self {
-    Self {
+  pub fn new() -> Result<Self, std::io::Error> {
+    Ok(Self {
       inner: Arc::new(Mutex::new(Inner {
         path: "".to_string(),
         byte_offset: 0x1,
@@ -57,12 +57,11 @@ impl LogFile {
         data_index: HashMap::new(),
         file_index: HashMap::new(),
       })),
-    }
+    })
   }
 
-  fn read_hint_file(&self) -> Result<(), std::io::Error> {
-    let mut inner = self.inner.lock().unwrap();
-    let path = format!("./tmp/hint-{}.log", inner.current_file_id);
+  fn read_hint_file(&self, inner: &mut MutexGuard<'_, Inner>) -> Result<(), std::io::Error> {
+    let path = format!("./tmp/hint-{}", inner.current_file_id);
     if !fs::exists(&path)? {
       return Ok(());
     }
@@ -113,86 +112,31 @@ impl LogFile {
   pub fn start(&self) -> Result<(), std::io::Error> {
     fs::create_dir_all("tmp")?;
 
-    // regenrate the index from the hint file
-    self.read_hint_file()?;
-
-    let mut inner = self.inner.lock().unwrap();
-
-    // regenrate the index from the file list
-    let mut files = fs::read_dir("./tmp")?
-      .filter_map(|entry| entry.ok())
-      .filter_map(|entry| {
-        let path = entry.path();
-        let file_name = path.file_name()?.to_str()?;
-
-        // check the prefix
-        if let Some(number_str) = file_name.strip_prefix("log-file-") {
-          // check that the rest is a number
-          if number_str.parse::<u64>().is_ok() {
-            return Some(path);
-          }
-        }
-
-        None
-      })
-      .collect::<Vec<_>>();
-
-    files.sort_by_key(|path| {
-      path
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .strip_prefix("log-file-")
-        .unwrap()
-        .parse::<u64>()
-        .unwrap()
-    });
-
-    for file_path in &files {
-      let file = File::open(file_path)?;
-      let file_id = file_path
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .strip_prefix("log-file-")
-        .unwrap()
-        .parse::<u64>()
-        .unwrap();
-      let metadata = fs::metadata(file_path)?;
-
-      inner
-        .file_index
-        .insert(file_id, file_path.to_str().unwrap().to_string());
-
-      let mut offset = 0;
-      loop {
-        if metadata.size() <= offset {
-          break;
-        }
-
-        let index = Index { offset, file_id };
-
-        let meta = match self.get_index_from_file(&mut offset, &file) {
-          Ok(meta) => meta,
-          Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
-          Err(e) => return Err(e),
-        };
-        let key = String::from_utf8(meta.key_buf.clone()).unwrap();
-
-        if meta.value_buf.is_empty() {
-          inner.data_index.remove(&key);
-          continue;
-        }
-
-        inner.data_index.insert(key, index);
-      }
+    // rebuild index from hint
+    {
+      let mut inner = self.inner.lock().unwrap();
+      self.read_hint_file(&mut inner)?;
     }
 
-    let id = files
-      .last()
-      .map(|path| {
+    // rebuild from log files
+    {
+      let mut inner = self.inner.lock().unwrap();
+
+      let mut files = fs::read_dir("./tmp")?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+          let path = entry.path();
+          let file_name = path.file_name()?.to_str()?;
+          if let Some(number_str) = file_name.strip_prefix("log-file-") {
+            if number_str.parse::<u64>().is_ok() {
+              return Some(path);
+            }
+          }
+          None
+        })
+        .collect::<Vec<_>>();
+
+      files.sort_by_key(|path| {
         path
           .file_name()
           .unwrap()
@@ -202,17 +146,73 @@ impl LogFile {
           .unwrap()
           .parse::<u64>()
           .unwrap()
-      })
-      .unwrap_or(0x1);
-    inner.current_file_id = id + 1;
+      });
 
-    drop(inner);
+      for file_path in &files {
+        let file = File::open(file_path)?;
+        let file_id = file_path
+          .file_name()
+          .unwrap()
+          .to_str()
+          .unwrap()
+          .strip_prefix("log-file-")
+          .unwrap()
+          .parse::<u64>()
+          .unwrap();
+        let metadata = fs::metadata(file_path)?;
 
+        inner
+          .file_index
+          .insert(file_id, file_path.to_str().unwrap().to_string());
+
+        let mut offset = 0;
+        loop {
+          if metadata.size() <= offset {
+            break;
+          }
+
+          let index = Index { offset, file_id };
+
+          let meta = match self.get_index_from_file(&mut offset, &file) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e),
+          };
+
+          let key = String::from_utf8(meta.key_buf.clone()).unwrap();
+          if meta.value_buf.is_empty() {
+            inner.data_index.remove(&key);
+          } else {
+            inner.data_index.insert(key, index);
+          }
+        }
+      }
+
+      let id = files
+        .last()
+        .map(|path| {
+          path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .strip_prefix("log-file-")
+            .unwrap()
+            .parse::<u64>()
+            .unwrap()
+        })
+        .unwrap_or(0x1);
+
+      inner.current_file_id = id + 1;
+    }
+
+    // we drop the lock BEFORE calling create()
     self.create()?;
+
     Ok(())
   }
 
-  pub fn create(&self) -> Result<(), std::io::Error> {
+  fn create(&self) -> Result<(), std::io::Error> {
     let mut inner = self.inner.lock().unwrap();
     let path = format!("./tmp/log-file-{}", inner.current_file_id);
 
@@ -230,7 +230,7 @@ impl LogFile {
     Ok(())
   }
 
-  pub fn append(&self, key: &str, value: &str) -> Result<(), io::Error> {
+  pub fn append<'a>(&self, key: &str, value: &'a str) -> Result<&'a str, io::Error> {
     let mut inner = self.inner.lock().unwrap();
     if key.is_empty() {
       error!("The index length should be at least 1 character");
@@ -248,17 +248,19 @@ impl LogFile {
 
     let timestamp = Utc::now().timestamp_nanos_opt().unwrap();
 
-    drop(inner);
-    self.insert_index_value(MetaIndex {
-      timestamp,
-      key_size: key.len(),
-      key_buf: key.as_bytes().to_vec(),
-      value_size: value.len(),
-      value_buf: value.as_bytes().to_vec(),
-    })?;
+    self.insert_index_value(
+      MetaIndex {
+        timestamp,
+        key_size: key.len(),
+        key_buf: key.as_bytes().to_vec(),
+        value_size: value.len(),
+        value_buf: value.as_bytes().to_vec(),
+      },
+      &mut inner,
+    )?;
 
     info!("[WRITE]", index_value = value.to_string());
-    Ok(())
+    Ok(value)
   }
 
   pub fn read(&self, id: &str) -> Result<String, io::Error> {
@@ -276,7 +278,7 @@ impl LogFile {
     Ok(value)
   }
 
-  pub fn update(&self, key: &str, value: &'static str) -> Result<(), io::Error> {
+  pub fn update(&self, key: &str, value: &str) -> Result<String, io::Error> {
     let mut inner = self.inner.lock().unwrap();
     if key.is_empty() {
       error!("The index length should be at least 1 character");
@@ -299,32 +301,36 @@ impl LogFile {
 
     let timestamp = Utc::now().timestamp();
 
-    drop(inner);
-    self.insert_index_value(MetaIndex {
-      timestamp,
-      key_size: key.len(),
-      key_buf: key.as_bytes().to_vec(),
-      value_size: value.len(),
-      value_buf: value.as_bytes().to_vec(),
-    })?;
+    // drop(inner);
+    self.insert_index_value(
+      MetaIndex {
+        timestamp,
+        key_size: key.len(),
+        key_buf: key.as_bytes().to_vec(),
+        value_size: value.len(),
+        value_buf: value.as_bytes().to_vec(),
+      },
+      &mut inner,
+    )?;
 
-    info!("[UPDATE]", key = key.to_string(), value = value);
+    info!("[UPDATE]", key = key.to_string(), value = value.to_string());
 
-    Ok(())
+    Ok(value.to_string())
   }
 
-  pub fn delete(&self, id: &str) -> Result<(), io::Error> {
+  pub fn delete(&self, id: &str) -> Result<String, io::Error> {
+    let mut inner = self.inner.lock().unwrap();
     let mut index = self.get_index_value(id)?;
     let value = String::from_utf8(index.value_buf.clone())
       .unwrap()
       .to_string();
     index.value_size = 0;
     index.value_buf.clear();
-    self.insert_index_value(index)?;
-    self.inner.lock().unwrap().data_index.remove(id);
+    self.insert_index_value(index, &mut inner)?;
+    inner.data_index.remove(id);
 
     info!("[DELETE]", key = id.to_string(), value = value);
-    Ok(())
+    Ok(value.to_string())
   }
 
   pub fn compact(&self) -> Result<(), io::Error> {
@@ -335,9 +341,11 @@ impl LogFile {
 
     for &file_id in sorted_file_ids {
       let file_idx = new_hash.get(&file_id).unwrap();
-      self.compact_file(&mut end_file, file_idx)?
+      self.compact_file(&mut end_file, file_idx)?;
     }
-    let _ = core::mem::replace(&mut self.inner.lock().unwrap().file_index, new_hash);
+
+    let mut inner = self.inner.lock().unwrap();
+    let _ = core::mem::replace(&mut inner.file_index, new_hash);
 
     let temp_file_path = format!(
       "./tmp/temp-log-file-{}",
@@ -345,8 +353,13 @@ impl LogFile {
     );
     let mut temp_file = File::create(&temp_file_path)?;
 
+    let mut offset = 0;
+    let mut final_data_index = HashMap::<String, Index>::new();
+
     // Keep record layout identical to append: ts, key_size, value_size, key, value.
-    for (_, value) in end_file.iter() {
+    for (key, value) in end_file.into_iter() {
+      final_data_index.insert(key, Index { offset, file_id: 1 });
+
       temp_file.write_all(&value.timestamp.to_le_bytes())?;
       temp_file.write_all(&value.key_size.to_le_bytes())?;
       temp_file.write_all(&value.value_size.to_le_bytes())?;
@@ -355,26 +368,27 @@ impl LogFile {
 
       // CRASH SAFETY HERE
       temp_file.sync_all()?; // durability guarantee
+      offset += (value.key_size + value.value_size) as u64 + 8 * 3;
     }
 
     temp_file.flush()?;
 
-    self.inner.lock().unwrap().current_file_id = 1;
-    let path = format!(
-      "./tmp/log-file-{}.log",
-      self.inner.lock().unwrap().current_file_id
-    );
-    for (_, path) in self.inner.lock().unwrap().file_index.iter() {
+    inner.current_file_id = 1;
+    let path = format!("./tmp/log-file-{}", inner.current_file_id);
+
+    // Clear the index file and remove the old files
+    for (_, path) in inner.file_index.iter() {
       fs::remove_file(path)?;
     }
+    inner.file_index.clear();
 
     drop(temp_file);
     fs::rename(&temp_file_path, &path)?;
 
-    let mut inner = self.inner.lock().unwrap();
     let current_file_id = inner.current_file_id;
     inner.path = path.clone();
     inner.file_index.insert(current_file_id, path);
+    inner.data_index = final_data_index;
     info!("[COMPACT] Compaction has been completed successfully.");
 
     drop(inner);
@@ -384,7 +398,7 @@ impl LogFile {
 
   fn write_hint_file(&self) -> Result<(), io::Error> {
     let inner = self.inner.lock().unwrap();
-    let path = format!("./tmp/hint-{}.log", inner.current_file_id);
+    let path = format!("./tmp/hint-{}", inner.current_file_id);
     let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     for (key, value) in inner.data_index.iter() {
@@ -429,10 +443,12 @@ impl LogFile {
     Ok(())
   }
 
-  fn insert_index_value(&self, meta: MetaIndex) -> Result<(), io::Error> {
-    let mut file = OpenOptions::new()
-      .append(true)
-      .open(&self.inner.lock().unwrap().path)?;
+  fn insert_index_value(
+    &self,
+    meta: MetaIndex,
+    inner: &mut MutexGuard<'_, Inner>,
+  ) -> Result<(), io::Error> {
+    let mut file = OpenOptions::new().append(true).open(&inner.path)?;
 
     file.write_all(&meta.timestamp.to_le_bytes())?;
     file.write_all(&meta.key_size.to_le_bytes())?;
@@ -444,7 +460,7 @@ impl LogFile {
     file.sync_all()?; // durability guarantee
 
     // FILE SEGMENTATION HERE
-    self.split()?;
+    self.split(inner)?;
 
     Ok(())
   }
@@ -504,8 +520,8 @@ impl LogFile {
     })
   }
 
-  fn split(&self) -> Result<(), io::Error> {
-    let metadata = fs::metadata(&self.inner.lock().unwrap().path)?;
+  fn split(&self, inner: &mut MutexGuard<'_, Inner>) -> Result<(), io::Error> {
+    let metadata = fs::metadata(&inner.path)?;
 
     if metadata.size() > FILE_THRESHOLD {
       trace!(
@@ -514,7 +530,7 @@ impl LogFile {
         file_size = metadata.size()
       );
 
-      self.inner.lock().unwrap().current_file_id += 1;
+      inner.current_file_id += 1;
       self.create()?;
     }
     Ok(())
