@@ -12,7 +12,11 @@ pub struct Node<K, V> {
   pub parent: *mut Node<K, V>,
 }
 
-impl<K: Default, V: Default> Node<K, V> {
+impl<K, V> Node<K, V>
+where
+  K: Default + Ord,
+  V: Default,
+{
   pub fn new(key: K, value: V, color: Color) -> Self {
     Self {
       key,
