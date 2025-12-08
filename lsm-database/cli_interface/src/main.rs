@@ -1,13 +1,31 @@
 use std::sync::Arc;
 
-use core_engine::log_file::{self, PERIODIC_COMPACTION_INTERVAL};
+use core_engine::{
+  linked_list::LinkedList,
+  // log_file::{self, PERIODIC_COMPACTION_INTERVAL},
+};
 use ttlog::{file_listener::FileListener, stdout_listener::StdoutListener, trace::Trace};
 
 fn main() -> Result<(), std::io::Error> {
-  let trace = Trace::init(2, 64, "test", Some("./tmp"));
-  trace.add_listener(Arc::new(FileListener::new("./tmp/ttlog.log")?));
-  trace.add_listener(Arc::new(StdoutListener::new()));
-  trace.set_level(ttlog::event::LogLevel::TRACE);
+  let mut list = LinkedList::<&str>::new();
+
+  list.insert_end("Hello1");
+  // list.insert_end("Hello2");
+  // list.insert_end("Hello3");
+  // list.insert_start("Hello4");
+
+  list.insert_at("Hello5", 0);
+  list.update_at("Hello6", 1);
+  let item = list.node_at(0);
+  //
+  let item = list.find("Hello5");
+  let size = list.size();
+  println!("{:#?}", item);
+
+  // let trace = Trace::init(2, 64, "test", Some("./tmp"));
+  // trace.add_listener(Arc::new(FileListener::new("./tmp/ttlog.log")?));
+  // trace.add_listener(Arc::new(StdoutListener::new()));
+  // trace.set_level(ttlog::event::LogLevel::TRACE);
   //
   // let log_file = log_file::LogFile::new()?;
   // log_file.start()?;
