@@ -19,8 +19,13 @@ fn main() -> Result<(), std::io::Error> {
   let item = list.node_at(0);
   //
   let item = list.find("Hello5");
+  // list.pop_start();
+  // list.pop_end();
+  // list.pop_end();
+  list.pop_at(1);
+  list.pop_at(0);
   let size = list.size();
-  println!("{:#?}", item);
+  println!("{:#?}", list);
 
   // let trace = Trace::init(2, 64, "test", Some("./tmp"));
   // trace.add_listener(Arc::new(FileListener::new("./tmp/ttlog.log")?));

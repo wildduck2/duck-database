@@ -153,4 +153,106 @@ mod linked_list_test {
 
     assert!(list.update_at("out of range", 25).is_none());
   }
+
+  #[test]
+  fn test_insert_at_on_empty_list_behaves_like_insert_start() {
+    let mut list = TestList::new();
+
+    list.insert_at("first", 10);
+    assert_eq!(collect_values(&list), vec!["first"]);
+    assert_eq!(list.size(), 1);
+
+    list.insert_at("second", 0);
+    assert_eq!(collect_values(&list), vec!["second", "first"]);
+    assert_eq!(list.size(), 2);
+  }
+
+  #[test]
+  fn test_insert_at_links_neighboring_nodes() {
+    let mut list = build_list(&["root", "second", "third"]);
+    let inserted = list.insert_at("middle", 2).unwrap();
+
+    let (head_value, tail_value) = {
+      let node = inserted.borrow();
+      (
+        node.head.as_ref().map(|link| link.borrow().value),
+        node.tail.as_ref().map(|link| link.borrow().value),
+      )
+    };
+
+    assert_eq!(head_value, Some("second"));
+    assert_eq!(tail_value, Some("third"));
+  }
+
+  #[test]
+  fn test_pop_start_updates_head_and_length() {
+    let mut list = build_list(&["root", "second", "third"]);
+
+    let popped = list.pop_start().unwrap();
+    assert_eq!(popped.borrow().value, "root");
+    assert_eq!(collect_values(&list), vec!["second", "third"]);
+    assert_eq!(list.size(), 2);
+
+    let new_head = list.head.clone().unwrap();
+    assert!(new_head.borrow().head.is_none());
+
+    list.pop_start();
+    list.pop_start();
+    assert!(list.pop_start().is_none());
+    assert_eq!(list.size(), 0);
+    assert!(list.head.is_none());
+  }
+
+  #[test]
+  fn test_pop_end_updates_tail_and_handles_empty_list() {
+    let mut list = build_list(&["root", "second", "third"]);
+
+    let popped = list.pop_end().unwrap();
+    assert_eq!(popped.borrow().value, "third");
+    assert_eq!(collect_values(&list), vec!["root", "second"]);
+    assert_eq!(list.size(), 2);
+
+    let tail = list.node_at(list.size() - 1).unwrap();
+    assert!(tail.borrow().tail.is_none());
+
+    list.pop_end();
+    list.pop_end();
+    assert!(list.head.is_none());
+    assert_eq!(list.size(), 0);
+    assert!(list.pop_end().is_none());
+  }
+
+  #[test]
+  fn test_pop_at_removes_middle_and_tail_nodes() {
+    let mut list = build_list(&["root", "second", "third", "fourth"]);
+
+    let middle = list.pop_at(2).unwrap();
+    assert_eq!(middle.borrow().value, "third");
+    assert_eq!(collect_values(&list), vec!["root", "second", "fourth"]);
+    assert_eq!(list.size(), 3);
+
+    let tail = list.pop_at(2).unwrap();
+    assert_eq!(tail.borrow().value, "fourth");
+    assert_eq!(collect_values(&list), vec!["root", "second"]);
+    assert_eq!(list.size(), 2);
+
+    assert!(list.pop_at(25).is_none());
+  }
+
+  #[test]
+  fn test_pop_at_zero_behaves_like_pop_start() {
+    let mut list = build_list(&["root", "second"]);
+
+    let popped = list.pop_at(0).unwrap();
+    assert_eq!(popped.borrow().value, "root");
+    assert_eq!(collect_values(&list), vec!["second"]);
+    assert_eq!(list.size(), 1);
+
+    let popped_again = list.pop_at(0).unwrap();
+    assert_eq!(popped_again.borrow().value, "second");
+    assert_eq!(list.size(), 0);
+    assert!(list.head.is_none());
+
+    assert!(list.pop_at(0).is_none());
+  }
 }

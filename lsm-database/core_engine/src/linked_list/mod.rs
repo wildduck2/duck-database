@@ -74,26 +74,18 @@ where
   }
 
   pub fn node_at(&self, pos: usize) -> Link<T> {
-    let mut cursor = match &self.head {
-      Some(h) => h.clone(),
-      None => return None,
-    };
-
+    let mut cursor = self.head.clone();
     let mut index = 0;
 
-    loop {
+    while let Some(node) = cursor {
       if index == pos {
-        return Some(cursor.clone());
+        return Some(node);
       }
-
-      match cursor.clone().borrow().tail.clone() {
-        Some(next) => {
-          cursor = next;
-          index += 1;
-        },
-        None => return None, // out of range
-      }
+      cursor = node.borrow().tail.clone();
+      index += 1;
     }
+
+    cursor
   }
 
   pub fn insert_start(&mut self, value: T) -> Link<T> {
@@ -135,6 +127,10 @@ where
   }
 
   pub fn insert_at(&mut self, value: T, pos: usize) -> Link<T> {
+    if pos == 0 || self.head.is_none() {
+      return self.insert_start(value);
+    }
+
     let new = Node::new(value).wrap();
 
     let mut cursor = self.head.clone().unwrap();
@@ -148,15 +144,12 @@ where
       current_pos += 1;
     }
 
-    if pos == 0 {
-      new.borrow_mut().tail = self.head.clone();
-      self.head = Some(new.clone());
-    } else {
-      new.borrow_mut().tail = cursor.borrow().tail.clone();
-      cursor.borrow_mut().tail = Some(new.clone());
-    }
+    let next = cursor.borrow().tail.clone();
+    new.borrow_mut().head = Some(cursor.clone());
+    new.borrow_mut().tail = next.clone();
+    cursor.borrow_mut().tail = Some(new.clone());
 
-    if let Some(next) = new.borrow().tail.clone() {
+    if let Some(next) = next {
       next.borrow_mut().head = Some(new.clone());
     }
 
@@ -175,30 +168,36 @@ where
   }
 
   pub fn pop_start(&mut self) -> Link<T> {
-    match &self.head {
-      Some(head) => {
-        let old = head.clone();
-
-        old.borrow_mut().head = None;
-        let node = old.borrow_mut().tail.clone();
-        self.head = node.clone();
-        if let Some(node) = node {
+    match self.head.take() {
+      Some(old_head) => {
+        let next = old_head.borrow_mut().tail.take();
+        if let Some(node) = &next {
           node.borrow_mut().head = None;
         }
 
-        Some(old)
+        self.head = next;
+        self.len = self.len.saturating_sub(1);
+        Some(old_head)
       },
       None => None,
     }
   }
 
   pub fn pop_end(&mut self) -> Link<T> {
+    if self.len.saturating_sub(1) == 0 {
+      let old = self.head.clone();
+      self.len = self.len.saturating_sub(1);
+      self.head = None;
+      return old;
+    }
+
     match Self::node_at(self, self.len - 1) {
       Some(x) => {
         if let Some(node) = x.borrow_mut().head.clone() {
           node.borrow_mut().tail = None
         };
 
+        self.len = self.len.saturating_sub(1);
         Some(x)
       },
       None => {
@@ -211,7 +210,6 @@ where
   pub fn pop_at(&mut self, pos: usize) -> Link<T> {
     match Self::node_at(self, pos) {
       Some(x) => {
-        println!("{:#?}", x);
         let head = x.borrow_mut().head.clone();
         let tail = x.borrow_mut().tail.clone();
 
@@ -226,6 +224,7 @@ where
           self.head = tail.clone();
         }
 
+        self.len = self.len.saturating_sub(1);
         Some(x)
       },
       None => None,
