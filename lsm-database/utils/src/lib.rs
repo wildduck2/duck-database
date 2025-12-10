@@ -12,3 +12,5 @@
 //! and dependency-free, making them easy to audit and test.
 pub mod searcher;
 pub mod sorter;
+
+pub mod linked_list;
