@@ -173,6 +173,64 @@ where
       None => None,
     }
   }
+
+  pub fn pop_start(&mut self) -> Link<T> {
+    match &self.head {
+      Some(head) => {
+        let old = head.clone();
+
+        old.borrow_mut().head = None;
+        let node = old.borrow_mut().tail.clone();
+        self.head = node.clone();
+        if let Some(node) = node {
+          node.borrow_mut().head = None;
+        }
+
+        Some(old)
+      },
+      None => None,
+    }
+  }
+
+  pub fn pop_end(&mut self) -> Link<T> {
+    match Self::node_at(self, self.len - 1) {
+      Some(x) => {
+        if let Some(node) = x.borrow_mut().head.clone() {
+          node.borrow_mut().tail = None
+        };
+
+        Some(x)
+      },
+      None => {
+        self.head = None;
+        None
+      },
+    }
+  }
+
+  pub fn pop_at(&mut self, pos: usize) -> Link<T> {
+    match Self::node_at(self, pos) {
+      Some(x) => {
+        println!("{:#?}", x);
+        let head = x.borrow_mut().head.clone();
+        let tail = x.borrow_mut().tail.clone();
+
+        if let Some(h) = &head {
+          h.borrow_mut().tail = tail.clone();
+        }
+        if let Some(t) = &tail {
+          t.borrow_mut().head = head.clone();
+        }
+
+        if pos == 0 {
+          self.head = tail.clone();
+        }
+
+        Some(x)
+      },
+      None => None,
+    }
+  }
 }
 
 impl<T> fmt::Debug for Node<T>

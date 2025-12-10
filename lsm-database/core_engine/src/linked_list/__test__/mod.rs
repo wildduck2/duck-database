@@ -44,7 +44,11 @@ mod linked_list_test {
 
     assert_eq!(
       collect_values(&list),
-      vec!["i am the root node", "i am the second node", "i am the third node"]
+      vec![
+        "i am the root node",
+        "i am the second node",
+        "i am the third node"
+      ]
     );
 
     // Tail of the last node should be None to terminate the chain
@@ -105,7 +109,10 @@ mod linked_list_test {
     let mut list = build_list(&["root", "second", "third"]);
 
     list.insert_at("new head", 0);
-    assert_eq!(collect_values(&list), vec!["new head", "root", "second", "third"]);
+    assert_eq!(
+      collect_values(&list),
+      vec!["new head", "root", "second", "third"]
+    );
 
     list.insert_at("middle", 2);
     assert_eq!(
@@ -146,15 +153,4 @@ mod linked_list_test {
 
     assert!(list.update_at("out of range", 25).is_none());
   }
-
-  // Future tests (commented while the corresponding features are missing):
-  // #[test]
-  // fn test_removal_updates_neighbor_links() {
-  //   // TODO: enable once LinkedList::remove or pop APIs are implemented.
-  // }
-  //
-  // #[test]
-  // fn test_backward_iteration_uses_head_pointers() {
-  //   // TODO: add when a safe iterator over head pointers becomes available.
-  // }
 }
