@@ -7,6 +7,12 @@
 //!   on ordered, copyable data.
 //! - [`sorter`]: a reference selection-sort implementation that
 //!   keeps the input immutable and returns a newly allocated vector.
+//! - [`linked_list`]: a flexible `Rc<RefCell<_>>` powered doubly linked list
+//!   used internally and by the other collections in this crate.
+//! - [`queue`]: a FIFO queue built on top of the same node representation,
+//!   offering `enqueue`, `dequeue`, and iteration helpers.
+//! - [`stack`]: a LIFO stack that exposes the classic `push`, `pop`, and
+//!   peek-style helpers while still allowing iteration when needed.
 //!
 //! Additional utilities should follow the same pattern: small, well-documented,
 //! and dependency-free, making them easy to audit and test.
@@ -14,3 +20,5 @@ pub mod searcher;
 pub mod sorter;
 
 pub mod linked_list;
+pub mod queue;
+pub mod stack;

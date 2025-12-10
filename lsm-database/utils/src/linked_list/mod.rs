@@ -20,7 +20,7 @@
 //! list.insert_end(3);
 //!
 //! assert_eq!(list.size(), 3);
-//! assert_eq!(list.find(2).unwrap().borrow()._value, 2);
+//! assert_eq!(list.find(2).unwrap().borrow().value, 2);
 //!
 //! let values: Vec<_> = list.iter().collect();
 //! assert_eq!(values, vec![1, 2, 3]);
@@ -37,14 +37,14 @@ type Link<T> = Option<Rc<RefCell<Node<T>>>>;
 /// Each node stores:
 ///
 /// * a previous pointer `prev`
-/// * a value `_value`
+/// * a value `value`
 /// * a next pointer `next`
 pub struct Node<T>
 where
   T: PartialEq,
 {
   pub prev: Link<T>,
-  pub _value: T,
+  pub value: T,
   pub next: Link<T>,
 }
 
@@ -52,11 +52,11 @@ impl<T> Node<T>
 where
   T: PartialEq,
 {
-  fn new(_value: T) -> Self {
+  fn new(value: T) -> Self {
     Self {
       prev: None,
       next: None,
-      _value,
+      value: value,
     }
   }
 
@@ -70,7 +70,7 @@ where
   T: PartialEq + std::fmt::Debug,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("Node").field("value", &self._value).finish()
+    f.debug_struct("Node").field("value", &self.value).finish()
   }
 }
 
@@ -130,7 +130,7 @@ where
 
     while let Some(node_rc) = cursor {
       let node = node_rc.borrow();
-      if node._value == value {
+      if node.value == value {
         return Some(node_rc.clone());
       }
       cursor = node.next.clone();
@@ -303,7 +303,7 @@ where
   pub fn update_start(&mut self, value: T) -> Link<T> {
     match self.head.as_ref() {
       Some(head) => {
-        head.borrow_mut()._value = value;
+        head.borrow_mut().value = value;
         Some(head.clone())
       },
       None => None,
@@ -316,7 +316,7 @@ where
   pub fn update_end(&mut self, value: T) -> Link<T> {
     match self.tail.as_ref() {
       Some(tail) => {
-        tail.borrow_mut()._value = value;
+        tail.borrow_mut().value = value;
         Some(tail.clone())
       },
       None => None,
@@ -338,7 +338,7 @@ where
     }
 
     let node = self.node_at(index).unwrap();
-    node.borrow_mut()._value = value;
+    node.borrow_mut().value = value;
     Some(node)
   }
 
@@ -407,7 +407,7 @@ where
   /// list.insert_end("c");
   ///
   /// let removed = list.pop_at(1).unwrap();
-  /// assert_eq!(removed.borrow()._value, "b");
+  /// assert_eq!(removed.borrow().value, "b");
   ///
   /// let values: Vec<_> = list.iter().collect();
   /// assert_eq!(values, vec!["a", "c"]);
@@ -485,7 +485,7 @@ where
 
     {
       let node = current.borrow();
-      value = node._value.clone();
+      value = node.value.clone();
       next = node.next.clone();
     }
 
@@ -519,13 +519,13 @@ where
 
       let node = rc_node.borrow();
 
-      let prev = node.prev.as_ref().map(|p| p.borrow()._value.clone());
-      let next = node.next.as_ref().map(|n| n.borrow()._value.clone());
+      let prev = node.prev.as_ref().map(|p| p.borrow().value.clone());
+      let next = node.next.as_ref().map(|n| n.borrow().value.clone());
 
       writeln!(
         f,
         "  Node {{ prev: {:?}, value: {:?}, next: {:?} }}",
-        prev, node._value, next
+        prev, node.value, next
       )?;
 
       cursor = node.next.clone();

@@ -30,7 +30,7 @@ mod linked_list_test {
     let mut list = TestList::new();
     list.insert_start("a");
     assert_eq!(list.size(), 1);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "a");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "a");
   }
 
   #[test]
@@ -38,7 +38,7 @@ mod linked_list_test {
     let mut list = TestList::new();
     list.insert_end("a");
     assert_eq!(list.size(), 1);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "a");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "a");
   }
 
   // ---------------------------------------------------------
@@ -49,34 +49,34 @@ mod linked_list_test {
   fn insert_end_multiple() {
     let list = make_list();
     assert_eq!(list.size(), 4);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "a");
-    assert_eq!(list.node_at(1).unwrap().borrow()._value, "b");
-    assert_eq!(list.node_at(2).unwrap().borrow()._value, "c");
-    assert_eq!(list.node_at(3).unwrap().borrow()._value, "d");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "a");
+    assert_eq!(list.node_at(1).unwrap().borrow().value, "b");
+    assert_eq!(list.node_at(2).unwrap().borrow().value, "c");
+    assert_eq!(list.node_at(3).unwrap().borrow().value, "d");
   }
 
   #[test]
   fn insert_at_middle() {
     let mut list = make_list();
     list.insert_at("x", 1); // a x b c d
-    assert_eq!(list.node_at(1).unwrap().borrow()._value, "x");
-    assert_eq!(list.node_at(2).unwrap().borrow()._value, "b");
-    assert_eq!(list.node_at(3).unwrap().borrow()._value, "c");
+    assert_eq!(list.node_at(1).unwrap().borrow().value, "x");
+    assert_eq!(list.node_at(2).unwrap().borrow().value, "b");
+    assert_eq!(list.node_at(3).unwrap().borrow().value, "c");
   }
 
   #[test]
   fn insert_at_start() {
     let mut list = make_list();
     list.insert_at("z", 0);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "z");
-    assert_eq!(list.node_at(1).unwrap().borrow()._value, "a");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "z");
+    assert_eq!(list.node_at(1).unwrap().borrow().value, "a");
   }
 
   #[test]
   fn insert_at_end() {
     let mut list = make_list();
     list.insert_at("x", 4);
-    assert_eq!(list.node_at(4).unwrap().borrow()._value, "x");
+    assert_eq!(list.node_at(4).unwrap().borrow().value, "x");
   }
 
   // ---------------------------------------------------------
@@ -88,7 +88,7 @@ mod linked_list_test {
     let list = make_list();
     let node = list.find("c");
     assert!(node.is_some());
-    assert_eq!(node.unwrap().borrow()._value, "c");
+    assert_eq!(node.unwrap().borrow().value, "c");
   }
 
   #[test]
@@ -105,14 +105,14 @@ mod linked_list_test {
   fn update_middle() {
     let mut list = make_list();
     list.update_at("x", 1);
-    assert_eq!(list.node_at(1).unwrap().borrow()._value, "x");
+    assert_eq!(list.node_at(1).unwrap().borrow().value, "x");
   }
 
   #[test]
   fn update_start() {
     let mut list = make_list();
     list.update_at("x", 0);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "x");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "x");
   }
 
   #[test]
@@ -129,16 +129,16 @@ mod linked_list_test {
   fn pop_start_basic() {
     let mut list = make_list();
     let removed = list.pop_start().unwrap();
-    assert_eq!(removed.borrow()._value, "a");
+    assert_eq!(removed.borrow().value, "a");
     assert_eq!(list.size(), 3);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "b");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "b");
   }
 
   #[test]
   fn pop_end_basic() {
     let mut list = make_list();
     let removed = list.pop_end().unwrap();
-    assert_eq!(removed.borrow()._value, "d");
+    assert_eq!(removed.borrow().value, "d");
     assert_eq!(list.size(), 3);
   }
 
@@ -146,16 +146,16 @@ mod linked_list_test {
   fn pop_at_middle() {
     let mut list = make_list();
     let removed = list.pop_at(1).unwrap(); // remove "b"
-    assert_eq!(removed.borrow()._value, "b");
+    assert_eq!(removed.borrow().value, "b");
     assert_eq!(list.size(), 3);
-    assert_eq!(list.node_at(1).unwrap().borrow()._value, "c");
+    assert_eq!(list.node_at(1).unwrap().borrow().value, "c");
   }
 
   #[test]
   fn pop_at_start() {
     let mut list = make_list();
     list.pop_at(0);
-    assert_eq!(list.node_at(0).unwrap().borrow()._value, "b");
+    assert_eq!(list.node_at(0).unwrap().borrow().value, "b");
   }
 
   #[test]
@@ -163,7 +163,7 @@ mod linked_list_test {
     let mut list = make_list();
     list.pop_at(3);
     assert_eq!(list.size(), 3);
-    assert_eq!(list.node_at(2).unwrap().borrow()._value, "c");
+    assert_eq!(list.node_at(2).unwrap().borrow().value, "c");
   }
 
   #[test]
@@ -209,8 +209,8 @@ mod linked_list_test {
     let b = list.node_at(1).unwrap();
     let c = list.node_at(2).unwrap();
 
-    assert_eq!(b.borrow().next.as_ref().unwrap().borrow()._value, "c");
-    assert_eq!(c.borrow().prev.as_ref().unwrap().borrow()._value, "b");
+    assert_eq!(b.borrow().next.as_ref().unwrap().borrow().value, "c");
+    assert_eq!(c.borrow().prev.as_ref().unwrap().borrow().value, "b");
   }
 
   #[test]
@@ -221,8 +221,8 @@ mod linked_list_test {
     let a = list.node_at(0).unwrap();
     let c = list.node_at(1).unwrap();
 
-    assert_eq!(a.borrow().next.as_ref().unwrap().borrow()._value, "c");
-    assert_eq!(c.borrow().prev.as_ref().unwrap().borrow()._value, "a");
+    assert_eq!(a.borrow().next.as_ref().unwrap().borrow().value, "c");
+    assert_eq!(c.borrow().prev.as_ref().unwrap().borrow().value, "a");
   }
 
   #[test]
