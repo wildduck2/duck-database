@@ -3,7 +3,7 @@ members = ["cli_interface","core_engine"
     # Add your individual crate folder names here:
     # "core_engine",
     # "cli_interface",
-]
+, "utils"]
 resolver = "2"
 
 [workspace.package]
